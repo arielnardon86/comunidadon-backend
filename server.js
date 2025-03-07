@@ -7,38 +7,78 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 // Validar variables de entorno
-const requiredEnvVars = ["DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME"];
+const requiredEnvVars = [
+  "DB_HOST",
+  "DB_USER",
+  "DB_PASSWORD",
+  "DB_NAME",
+  "SECRET_KEY",
+  "ADMIN_USERNAME",
+  "ADMIN_PASSWORD",
+];
 const missingVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 
 if (missingVars.length > 0) {
-  console.error(`❌ Faltan las siguientes variables de entorno: ${missingVars.join(", ")}`);
+  console.error(
+    `❌ Faltan las siguientes variables de entorno: ${missingVars.join(", ")}`
+  );
   process.exit(1);
 }
 
 console.log("Valores de entorno cargados:");
 console.log("DB_HOST:", process.env.DB_HOST);
 console.log("DB_USER:", process.env.DB_USER);
-console.log("DB_PASSWORD:", process.env.DB_PASSWORD);
+console.log("DB_PASSWORD:", process.env.DB_PASSWORD ? "****" : "No definido");
 console.log("DB_NAME:", process.env.DB_NAME);
 console.log("DB_PORT:", process.env.DB_PORT);
+console.log(
+  "ADMIN_USERNAME:",
+  process.env.ADMIN_USERNAME ? "****" : "No definido"
+);
+console.log(
+  "ADMIN_PASSWORD:",
+  process.env.ADMIN_PASSWORD ? "****" : "No definido"
+);
+console.log("SECRET_KEY:", process.env.SECRET_KEY ? "****" : "No definido");
 
 const app = express();
 
+// Configurar CORS para permitir el origen del frontend
+const allowedOrigins = [
+  "http://localhost:5173", // Para desarrollo local
+  "https://communityon.vercel.app", // Dominio del frontend en Vercel
+];
 app.use(
   cors({
-    origin: ["http://localhost:3001", "http://localhost:5173"],
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origen no permitido por CORS: ${origin}`));
+      }
+    },
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true, // Si usas cookies o autenticación
   })
 );
 
 app.use(express.json());
 
-const SECRET_KEY = process.env.SECRET_KEY || "super_secreto";
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "1234";
+// Middleware para manejar errores de CORS
+app.use((err, req, res, next) => {
+  if (err.message.includes("CORS")) {
+    console.error(`❌ Error de CORS: ${err.message}`);
+    return res.status(403).json({ error: "Acceso denegado por política CORS" });
+  }
+  next(err);
+});
 
-// ✅ Configuración del pool de conexiones a Azure SQL
+const SECRET_KEY = process.env.SECRET_KEY;
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+// Configuración del pool de conexiones a Azure SQL
 const dbConfig = {
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
@@ -47,7 +87,7 @@ const dbConfig = {
   port: Number(process.env.DB_PORT) || 1433,
   options: {
     encrypt: true,
-    trustServerCertificate: false,
+    trustServerCertificate: false, // En producción, asegúrate de que el certificado sea válido
   },
   pool: {
     max: 10,
@@ -60,13 +100,16 @@ const dbConfig = {
 
 const pool = new sql.ConnectionPool(dbConfig);
 
-// ✅ Conectar al pool al iniciar
+// Conectar al pool al iniciar
 pool
   .connect()
   .then(() => console.log("✅ Conectado a Azure SQL"))
-  .catch((err) => console.error("❌ Error al conectar al pool:", err));
+  .catch((err) => {
+    console.error("❌ Error al conectar al pool:", err);
+    process.exit(1); // Detiene el servidor si no puede conectar a la DB
+  });
 
-// ✅ Función para obtener una conexión del pool
+// Función para obtener una conexión del pool
 async function getDBConnection() {
   try {
     return await pool.connect();
@@ -76,23 +119,29 @@ async function getDBConnection() {
   }
 }
 
-// ✅ Middleware para verificar token
+// Middleware para verificar token
 const verifyToken = (req, res, next) => {
-  const token = req.headers["authorization"];
+  const authHeader = req.headers["authorization"];
+  if (!authHeader) {
+    return res.status(403).json({ error: "Acceso denegado: Token no proporcionado" });
+  }
+
+  const token = authHeader.split(" ")[1]; // Espera formato "Bearer <token>"
   if (!token) {
-    return res.status(403).json({ error: "Acceso denegado" });
+    return res.status(403).json({ error: "Acceso denegado: Token mal formado" });
   }
 
   try {
-    const decoded = jwt.verify(token.split(" ")[1], SECRET_KEY);
+    const decoded = jwt.verify(token, SECRET_KEY);
     req.user = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ error: "Token inválido" });
+    console.error("❌ Error al verificar token:", err.message);
+    return res.status(401).json({ error: "Token inválido o expirado" });
   }
 };
 
-// ✅ Ruta de login
+// Ruta de login
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
 
@@ -108,7 +157,7 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// ✅ Ruta de prueba para verificar conexión a Azure SQL
+// Ruta de prueba para verificar conexión a Azure SQL
 app.get("/api/test-db", async (req, res) => {
   let connection;
   try {
@@ -123,7 +172,7 @@ app.get("/api/test-db", async (req, res) => {
   }
 });
 
-// ✅ Ruta para obtener las mesas
+// Ruta para obtener las mesas
 app.get("/api/tables", verifyToken, async (req, res) => {
   let connection;
   try {
@@ -132,13 +181,13 @@ app.get("/api/tables", verifyToken, async (req, res) => {
     res.status(200).json(result.recordset);
   } catch (error) {
     console.error("❌ Error al obtener mesas:", error);
-    res.status(500).json({ error: "No se pudieron obtener las mesas" });
+    res.status(500).json({ error: "No se pudieron obtener las mesas", details: error.message });
   } finally {
     if (connection) connection.close();
   }
 });
 
-// ✅ Ruta para obtener las reservas
+// Ruta para obtener las reservas
 app.get("/api/reservations", verifyToken, async (req, res) => {
   let connection;
   try {
@@ -147,13 +196,13 @@ app.get("/api/reservations", verifyToken, async (req, res) => {
     res.status(200).json(result.recordset);
   } catch (error) {
     console.error("❌ Error al obtener reservas:", error);
-    res.status(500).json({ error: "No se pudieron obtener las reservas" });
+    res.status(500).json({ error: "No se pudieron obtener las reservas", details: error.message });
   } finally {
     if (connection) connection.close();
   }
 });
 
-// ✅ Ruta para crear una nueva reserva
+// Ruta para crear una nueva reserva
 app.post("/api/reservations", verifyToken, async (req, res) => {
   const { tableId, turno, date } = req.body;
 
@@ -171,7 +220,9 @@ app.post("/api/reservations", verifyToken, async (req, res) => {
       .input("tableId", sql.Int, tableId)
       .input("turno", sql.NVarChar, turno)
       .input("date", sql.Date, date)
-      .query("SELECT * FROM reservations WHERE table_id = @tableId AND turno = @turno AND date = @date");
+      .query(
+        "SELECT * FROM reservations WHERE table_id = @tableId AND turno = @turno AND date = @date"
+      );
 
     if (existing.recordset.length > 0) {
       return res.status(400).json({ error: "Mesa ya reservada en ese turno" });
@@ -203,7 +254,14 @@ app.post("/api/reservations", verifyToken, async (req, res) => {
   }
 });
 
-// ✅ Iniciar el servidor
-app.listen(3001, () => {
-  console.log("🚀 Servidor corriendo en http://localhost:3001");
+// Middleware para manejar errores generales
+app.use((err, req, res, next) => {
+  console.error("❌ Error en el servidor:", err);
+  res.status(500).json({ error: "Error interno del servidor", details: err.message });
+});
+
+// Iniciar el servidor con puerto dinámico para Render
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
 });
