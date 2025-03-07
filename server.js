@@ -3,7 +3,8 @@ import cors from "cors";
 import jwt from "jsonwebtoken";
 import sql from "mssql";
 import * as dotenv from "dotenv";
-import NodeCache from "node-cache"; // Importar node-cache
+import bcrypt from "bcrypt";
+import NodeCache from "node-cache";
 
 dotenv.config();
 
@@ -14,8 +15,6 @@ const requiredEnvVars = [
   "DB_PASSWORD",
   "DB_NAME",
   "SECRET_KEY",
-  "ADMIN_USERNAME",
-  "ADMIN_PASSWORD",
 ];
 const missingVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 
@@ -32,14 +31,6 @@ console.log("DB_USER:", process.env.DB_USER);
 console.log("DB_PASSWORD:", process.env.DB_PASSWORD ? "****" : "No definido");
 console.log("DB_NAME:", process.env.DB_NAME);
 console.log("DB_PORT:", process.env.DB_PORT);
-console.log(
-  "ADMIN_USERNAME:",
-  process.env.ADMIN_USERNAME ? "****" : "No definido"
-);
-console.log(
-  "ADMIN_PASSWORD:",
-  process.env.ADMIN_PASSWORD ? "****" : "No definido"
-);
 console.log("SECRET_KEY:", process.env.SECRET_KEY ? "****" : "No definido");
 
 // Inicializar el caché con un TTL de 10 minutos
@@ -47,10 +38,10 @@ const cache = new NodeCache({ stdTTL: 600 });
 
 const app = express();
 
-// Configurar CORS para permitir el origen del frontend
+// Configurar CORS
 const allowedOrigins = [
-  "http://localhost:5173", // Para desarrollo local
-  "https://communityon.vercel.app", // Dominio del frontend en Vercel
+  "http://localhost:5173",
+  "https://communityon.vercel.app",
 ];
 app.use(
   cors({
@@ -79,8 +70,6 @@ app.use((err, req, res, next) => {
 });
 
 const SECRET_KEY = process.env.SECRET_KEY;
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 // Configuración del pool de conexiones a Azure SQL
 const dbConfig = {
@@ -145,6 +134,56 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+// Middleware para verificar si el usuario es admin
+const verifyAdmin = (req, res, next) => {
+  if (req.user.username !== "admin") {
+    return res.status(403).json({ error: "Acceso denegado: Solo el admin puede realizar esta acción" });
+  }
+  next();
+};
+
+// Ruta de registro de nuevos usuarios (restringida a admin)
+app.post("/api/register", verifyToken, verifyAdmin, async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username y password son obligatorios" });
+  }
+
+  let connection;
+  try {
+    connection = await getDBConnection();
+
+    // Verificar si el username ya existe
+    const existingUser = await connection
+      .request()
+      .input("username", sql.NVarChar, username)
+      .query("SELECT * FROM users WHERE username = @username");
+
+    if (existingUser.recordset.length > 0) {
+      return res.status(400).json({ error: "El username ya está en uso" });
+    }
+
+    // Hashear la contraseña con bcrypt
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Insertar nuevo usuario
+    await connection
+      .request()
+      .input("username", sql.NVarChar, username)
+      .input("password", sql.NVarChar, hashedPassword)
+      .query("INSERT INTO users (username, password) VALUES (@username, @password)");
+
+    res.status(201).json({ message: "Usuario registrado con éxito" });
+  } catch (error) {
+    console.error("❌ Error al registrar usuario:", error);
+    res.status(500).json({ error: "No se pudo registrar el usuario", details: error.message });
+  } finally {
+    if (connection) connection.close();
+  }
+});
+
 // Ruta de login
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
@@ -153,11 +192,33 @@ app.post("/api/login", async (req, res) => {
     return res.status(400).json({ error: "Username y password son obligatorios" });
   }
 
-  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-    const token = jwt.sign({ username }, SECRET_KEY, { expiresIn: "1h" });
-    return res.status(200).json({ message: "Login exitoso", token });
-  } else {
-    return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
+  let connection;
+  try {
+    connection = await getDBConnection();
+
+    const result = await connection
+      .request()
+      .input("username", sql.NVarChar, username)
+      .query("SELECT * FROM users WHERE username = @username");
+
+    if (result.recordset.length === 0) {
+      return res.status(401).json({ error: "Usuario no encontrado" });
+    }
+
+    const user = result.recordset[0];
+    const match = await bcrypt.compare(password, user.password);
+
+    if (!match) {
+      return res.status(401).json({ error: "Contraseña incorrecta" });
+    }
+
+    const token = jwt.sign({ username: user.username }, SECRET_KEY, { expiresIn: "1h" });
+    res.status(200).json({ message: "Login exitoso", token });
+  } catch (error) {
+    console.error("❌ Error al iniciar sesión:", error);
+    res.status(500).json({ error: "Error al iniciar sesión", details: error.message });
+  } finally {
+    if (connection) connection.close();
   }
 });
 
