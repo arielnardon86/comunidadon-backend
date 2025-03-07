@@ -3,6 +3,7 @@ import cors from "cors";
 import jwt from "jsonwebtoken";
 import sql from "mssql";
 import * as dotenv from "dotenv";
+import NodeCache from "node-cache"; // Importar node-cache
 
 dotenv.config();
 
@@ -41,6 +42,9 @@ console.log(
 );
 console.log("SECRET_KEY:", process.env.SECRET_KEY ? "****" : "No definido");
 
+// Inicializar el caché con un TTL de 10 minutos
+const cache = new NodeCache({ stdTTL: 600 });
+
 const app = express();
 
 // Configurar CORS para permitir el origen del frontend
@@ -59,7 +63,7 @@ app.use(
     },
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true, // Si usas cookies o autenticación
+    credentials: true,
   })
 );
 
@@ -87,7 +91,7 @@ const dbConfig = {
   port: Number(process.env.DB_PORT) || 1433,
   options: {
     encrypt: true,
-    trustServerCertificate: false, // En producción, asegúrate de que el certificado sea válido
+    trustServerCertificate: false,
   },
   pool: {
     max: 10,
@@ -106,7 +110,7 @@ pool
   .then(() => console.log("✅ Conectado a Azure SQL"))
   .catch((err) => {
     console.error("❌ Error al conectar al pool:", err);
-    process.exit(1); // Detiene el servidor si no puede conectar a la DB
+    process.exit(1);
   });
 
 // Función para obtener una conexión del pool
@@ -126,7 +130,7 @@ const verifyToken = (req, res, next) => {
     return res.status(403).json({ error: "Acceso denegado: Token no proporcionado" });
   }
 
-  const token = authHeader.split(" ")[1]; // Espera formato "Bearer <token>"
+  const token = authHeader.split(" ")[1];
   if (!token) {
     return res.status(403).json({ error: "Acceso denegado: Token mal formado" });
   }
@@ -187,19 +191,30 @@ app.get("/api/tables", verifyToken, async (req, res) => {
   }
 });
 
-// Ruta para obtener las reservas
+// Ruta para obtener las reservas (con caché)
 app.get("/api/reservations", verifyToken, async (req, res) => {
   let connection;
   try {
+    const cacheKey = "reservations";
+    const cachedReservations = cache.get(cacheKey);
+    if (cachedReservations) {
+      console.log("✅ Devolviendo reservas desde caché");
+      return res.status(200).json(cachedReservations);
+    }
+
     connection = await getDBConnection();
-    const result = await connection.request().query("SELECT * FROM reservations");
+    const result = await connection
+      .request()
+      .query("SELECT id, table_id, turno, date, username FROM reservations");
     const formattedReservations = result.recordset.map((res) => ({
       id: res.id,
-      tableId: res.table_id, // Renombra table_id a tableId
+      tableId: res.table_id,
       turno: res.turno,
-      date: res.date.toISOString().split("T")[0], // Formatea la fecha a YYYY-MM-DD
+      date: res.date.toISOString().split("T")[0],
       username: res.username,
     }));
+    cache.set(cacheKey, formattedReservations);
+    console.log("✅ Reservas obtenidas de la BD y guardadas en caché");
     res.status(200).json(formattedReservations);
   } catch (error) {
     console.error("❌ Error al obtener reservas:", error);
@@ -248,11 +263,15 @@ app.post("/api/reservations", verifyToken, async (req, res) => {
 
     const newReservation = {
       id: result.recordset[0].id,
-      tableId, // Usa tableId en lugar de table_id
+      tableId,
       turno,
-      date: new Date(date).toISOString().split("T")[0], // Asegura el formato YYYY-MM-DD
+      date: new Date(date).toISOString().split("T")[0],
       username: req.user.username,
     };
+
+    // Invalidar el caché después de crear una reserva
+    cache.del("reservations");
+    console.log("✅ Caché de reservas invalidado después de crear una nueva reserva");
 
     res.status(201).json(newReservation);
   } catch (error) {
