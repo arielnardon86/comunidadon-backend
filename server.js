@@ -193,7 +193,14 @@ app.get("/api/reservations", verifyToken, async (req, res) => {
   try {
     connection = await getDBConnection();
     const result = await connection.request().query("SELECT * FROM reservations");
-    res.status(200).json(result.recordset);
+    const formattedReservations = result.recordset.map((res) => ({
+      id: res.id,
+      tableId: res.table_id, // Renombra table_id a tableId
+      turno: res.turno,
+      date: res.date.toISOString().split("T")[0], // Formatea la fecha a YYYY-MM-DD
+      username: res.username,
+    }));
+    res.status(200).json(formattedReservations);
   } catch (error) {
     console.error("❌ Error al obtener reservas:", error);
     res.status(500).json({ error: "No se pudieron obtener las reservas", details: error.message });
@@ -239,13 +246,15 @@ app.post("/api/reservations", verifyToken, async (req, res) => {
         "INSERT INTO reservations (table_id, turno, date, username) VALUES (@tableId, @turno, @date, @username); SELECT SCOPE_IDENTITY() as id"
       );
 
-    res.status(201).json({
+    const newReservation = {
       id: result.recordset[0].id,
-      tableId,
+      tableId, // Usa tableId en lugar de table_id
       turno,
-      date,
+      date: new Date(date).toISOString().split("T")[0], // Asegura el formato YYYY-MM-DD
       username: req.user.username,
-    });
+    };
+
+    res.status(201).json(newReservation);
   } catch (error) {
     console.error("❌ Error al realizar reserva:", error);
     res.status(500).json({ error: "No se pudo realizar la reserva", details: error.message });
