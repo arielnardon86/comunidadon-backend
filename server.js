@@ -343,6 +343,36 @@ app.post("/api/reservations", verifyToken, async (req, res) => {
   }
 });
 
+// Ruta para cancelar una reserva (restringida a admin)
+app.delete("/api/reservations/:id", verifyToken, verifyAdmin, async (req, res) => {
+  const reservationId = req.params.id;
+
+  let connection;
+  try {
+    connection = await getDBConnection();
+
+    const result = await connection
+      .request()
+      .input("id", sql.Int, reservationId)
+      .query("DELETE FROM reservations WHERE id = @id");
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: "Reserva no encontrada" });
+    }
+
+    // Invalidar el caché después de cancelar una reserva
+    cache.del("reservations");
+    console.log("✅ Caché de reservas invalidado después de cancelar una reserva");
+
+    res.json({ message: "Reserva cancelada con éxito" });
+  } catch (err) {
+    console.error("❌ Error al cancelar la reserva:", err);
+    res.status(500).json({ error: "Error al cancelar la reserva", details: err.message });
+  } finally {
+    if (connection) connection.close();
+  }
+});
+
 // Middleware para manejar errores generales
 app.use((err, req, res, next) => {
   console.error("❌ Error en el servidor:", err);
