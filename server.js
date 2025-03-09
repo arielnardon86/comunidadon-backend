@@ -9,13 +9,7 @@ import NodeCache from "node-cache";
 dotenv.config();
 
 // Validar variables de entorno
-const requiredEnvVars = [
-  "DB_HOST",
-  "DB_USER",
-  "DB_PASSWORD",
-  "DB_NAME",
-  "SECRET_KEY",
-];
+const requiredEnvVars = ["SECRET_KEY"];
 const missingVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 
 if (missingVars.length > 0) {
@@ -26,12 +20,76 @@ if (missingVars.length > 0) {
 }
 
 console.log("Valores de entorno cargados:");
-console.log("DB_HOST:", process.env.DB_HOST);
-console.log("DB_USER:", process.env.DB_USER);
-console.log("DB_PASSWORD:", process.env.DB_PASSWORD ? "****" : "No definido");
-console.log("DB_NAME:", process.env.DB_NAME);
-console.log("DB_PORT:", process.env.DB_PORT);
 console.log("SECRET_KEY:", process.env.SECRET_KEY ? "****" : "No definido");
+
+// Configuración de bases de datos por edificio
+const dbConfigs = {
+  vow: {
+    user: process.env.VOW_DB_USER,
+    password: process.env.VOW_DB_PASSWORD,
+    server: process.env.VOW_DB_HOST,
+    database: process.env.VOW_DB_NAME,
+    port: Number(process.env.VOW_DB_PORT) || 1433,
+    options: {
+      encrypt: true,
+      trustServerCertificate: false,
+    },
+    pool: {
+      max: 10,
+      min: 0,
+      idleTimeoutMillis: 30000,
+    },
+    requestTimeout: 30000,
+    connectionTimeout: 30000,
+  },
+  Torre_x: {
+    user: process.env.Torre_x_DB_USER,
+    password: process.env.Torre_x_DB_PASSWORD,
+    server: process.env.Torre_x_DB_HOST,
+    database: process.env.Torre_x_DB_NAME,
+    port: Number(process.env.Torre_x_DB_PORT) || 1433,
+    options: {
+      encrypt: true,
+      trustServerCertificate: false,
+    },
+    pool: {
+      max: 10,
+      min: 0,
+      idleTimeoutMillis: 30000,
+    },
+    requestTimeout: 30000,
+    connectionTimeout: 30000,
+  },
+  // Agrega más edificios aquí según sea necesario
+};
+
+// Validar configuraciones de bases de datos
+for (const [building, config] of Object.entries(dbConfigs)) {
+  const missingConfigVars = ["user", "password", "server", "database"].filter(
+    (key) => !config[key]
+  );
+  if (missingConfigVars.length > 0) {
+    console.error(
+      `❌ Faltan las siguientes configuraciones para el edificio ${building}: ${missingConfigVars.join(
+        ", "
+      )}`
+    );
+    process.exit(1);
+  }
+}
+
+// Crear pools de conexión para cada edificio
+const pools = {};
+for (const [building, config] of Object.entries(dbConfigs)) {
+  pools[building] = new sql.ConnectionPool(config);
+  pools[building]
+    .connect()
+    .then(() => console.log(`✅ Conectado a Azure SQL para ${building}`))
+    .catch((err) => {
+      console.error(`❌ Error al conectar al pool de ${building}:`, err);
+      process.exit(1);
+    });
+}
 
 // Inicializar el caché con un TTL de 10 minutos
 const cache = new NodeCache({ stdTTL: 600 });
@@ -71,43 +129,22 @@ app.use((err, req, res, next) => {
 
 const SECRET_KEY = process.env.SECRET_KEY;
 
-// Configuración del pool de conexiones a Azure SQL
-const dbConfig = {
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  server: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  port: Number(process.env.DB_PORT) || 1433,
-  options: {
-    encrypt: true,
-    trustServerCertificate: false,
-  },
-  pool: {
-    max: 10,
-    min: 0,
-    idleTimeoutMillis: 30000,
-  },
-  requestTimeout: 30000,
-  connectionTimeout: 30000,
-};
+// Middleware para determinar el edificio desde la URL
+app.use((req, res, next) => {
+  const building = req.path.split("/")[1]; // Ejemplo: "/vow/api/tables" -> "vow"
+  if (!building || !dbConfigs[building]) {
+    return res.status(404).json({ error: "Edificio no encontrado" });
+  }
+  req.building = building;
+  next();
+});
 
-const pool = new sql.ConnectionPool(dbConfig);
-
-// Conectar al pool al iniciar
-pool
-  .connect()
-  .then(() => console.log("✅ Conectado a Azure SQL"))
-  .catch((err) => {
-    console.error("❌ Error al conectar al pool:", err);
-    process.exit(1);
-  });
-
-// Función para obtener una conexión del pool
-async function getDBConnection() {
+// Función para obtener una conexión del pool según el edificio
+async function getDBConnection(req) {
   try {
-    return await pool.connect();
+    return await pools[req.building].connect();
   } catch (err) {
-    console.error("❌ Error al obtener conexión a la BD:", err);
+    console.error(`❌ Error al obtener conexión a la BD para ${req.building}:`, err);
     throw err;
   }
 }
@@ -143,7 +180,7 @@ const verifyAdmin = (req, res, next) => {
 };
 
 // Ruta de registro de nuevos usuarios (restringida a admin)
-app.post("/api/register", verifyToken, verifyAdmin, async (req, res) => {
+app.post("/:building/api/register", verifyToken, verifyAdmin, async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -152,7 +189,7 @@ app.post("/api/register", verifyToken, verifyAdmin, async (req, res) => {
 
   let connection;
   try {
-    connection = await getDBConnection();
+    connection = await getDBConnection(req);
 
     // Verificar si el username ya existe
     const existingUser = await connection
@@ -177,7 +214,7 @@ app.post("/api/register", verifyToken, verifyAdmin, async (req, res) => {
 
     res.status(201).json({ message: "Usuario registrado con éxito" });
   } catch (error) {
-    console.error("❌ Error al registrar usuario:", error);
+    console.error(`❌ Error al registrar usuario en ${req.building}:`, error);
     res.status(500).json({ error: "No se pudo registrar el usuario", details: error.message });
   } finally {
     if (connection) connection.close();
@@ -185,7 +222,7 @@ app.post("/api/register", verifyToken, verifyAdmin, async (req, res) => {
 });
 
 // Ruta de login
-app.post("/api/login", async (req, res) => {
+app.post("/:building/api/login", async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -194,7 +231,7 @@ app.post("/api/login", async (req, res) => {
 
   let connection;
   try {
-    connection = await getDBConnection();
+    connection = await getDBConnection(req);
 
     const result = await connection
       .request()
@@ -212,10 +249,12 @@ app.post("/api/login", async (req, res) => {
       return res.status(401).json({ error: "Contraseña incorrecta" });
     }
 
-    const token = jwt.sign({ username: user.username }, SECRET_KEY, { expiresIn: "1h" });
+    const token = jwt.sign({ username: user.username, building: req.building }, SECRET_KEY, {
+      expiresIn: "1h",
+    });
     res.status(200).json({ message: "Login exitoso", token });
   } catch (error) {
-    console.error("❌ Error al iniciar sesión:", error);
+    console.error(`❌ Error al iniciar sesión en ${req.building}:`, error);
     res.status(500).json({ error: "Error al iniciar sesión", details: error.message });
   } finally {
     if (connection) connection.close();
@@ -223,14 +262,14 @@ app.post("/api/login", async (req, res) => {
 });
 
 // Ruta de prueba para verificar conexión a Azure SQL
-app.get("/api/test-db", async (req, res) => {
+app.get("/:building/api/test-db", async (req, res) => {
   let connection;
   try {
-    connection = await getDBConnection();
+    connection = await getDBConnection(req);
     const result = await connection.request().query("SELECT 1 + 1 AS result");
     res.json({ success: true, result: result.recordset[0].result });
   } catch (error) {
-    console.error("❌ Error al conectar con la BD:", error);
+    console.error(`❌ Error al conectar con la BD de ${req.building}:`, error);
     res.status(500).json({ error: "Error al conectar con la base de datos", details: error.message });
   } finally {
     if (connection) connection.close();
@@ -238,14 +277,14 @@ app.get("/api/test-db", async (req, res) => {
 });
 
 // Ruta para obtener las mesas
-app.get("/api/tables", verifyToken, async (req, res) => {
+app.get("/:building/api/tables", verifyToken, async (req, res) => {
   let connection;
   try {
-    connection = await getDBConnection();
+    connection = await getDBConnection(req);
     const result = await connection.request().query("SELECT * FROM tables");
     res.status(200).json(result.recordset);
   } catch (error) {
-    console.error("❌ Error al obtener mesas:", error);
+    console.error(`❌ Error al obtener mesas de ${req.building}:`, error);
     res.status(500).json({ error: "No se pudieron obtener las mesas", details: error.message });
   } finally {
     if (connection) connection.close();
@@ -253,17 +292,17 @@ app.get("/api/tables", verifyToken, async (req, res) => {
 });
 
 // Ruta para obtener las reservas (con caché)
-app.get("/api/reservations", verifyToken, async (req, res) => {
+app.get("/:building/api/reservations", verifyToken, async (req, res) => {
   let connection;
   try {
-    const cacheKey = "reservations";
+    const cacheKey = `reservations_${req.building}`;
     const cachedReservations = cache.get(cacheKey);
     if (cachedReservations) {
-      console.log("✅ Devolviendo reservas desde caché");
+      console.log(`✅ Devolviendo reservas desde caché para ${req.building}`);
       return res.status(200).json(cachedReservations);
     }
 
-    connection = await getDBConnection();
+    connection = await getDBConnection(req);
     const result = await connection
       .request()
       .query("SELECT id, table_id, turno, date, username FROM reservations");
@@ -275,10 +314,10 @@ app.get("/api/reservations", verifyToken, async (req, res) => {
       username: res.username,
     }));
     cache.set(cacheKey, formattedReservations);
-    console.log("✅ Reservas obtenidas de la BD y guardadas en caché");
+    console.log(`✅ Reservas obtenidas de la BD y guardadas en caché para ${req.building}`);
     res.status(200).json(formattedReservations);
   } catch (error) {
-    console.error("❌ Error al obtener reservas:", error);
+    console.error(`❌ Error al obtener reservas de ${req.building}:`, error);
     res.status(500).json({ error: "No se pudieron obtener las reservas", details: error.message });
   } finally {
     if (connection) connection.close();
@@ -286,7 +325,7 @@ app.get("/api/reservations", verifyToken, async (req, res) => {
 });
 
 // Ruta para crear una nueva reserva
-app.post("/api/reservations", verifyToken, async (req, res) => {
+app.post("/:building/api/reservations", verifyToken, async (req, res) => {
   const { tableId, turno, date } = req.body;
 
   if (!tableId || !turno || !date) {
@@ -295,7 +334,7 @@ app.post("/api/reservations", verifyToken, async (req, res) => {
 
   let connection;
   try {
-    connection = await getDBConnection();
+    connection = await getDBConnection(req);
 
     // Verificar si la mesa ya está reservada
     const existing = await connection
@@ -331,12 +370,14 @@ app.post("/api/reservations", verifyToken, async (req, res) => {
     };
 
     // Invalidar el caché después de crear una reserva
-    cache.del("reservations");
-    console.log("✅ Caché de reservas invalidado después de crear una nueva reserva");
+    cache.del(`reservations_${req.building}`);
+    console.log(
+      `✅ Caché de reservas invalidado después de crear una nueva reserva en ${req.building}`
+    );
 
     res.status(201).json(newReservation);
   } catch (error) {
-    console.error("❌ Error al realizar reserva:", error);
+    console.error(`❌ Error al realizar reserva en ${req.building}:`, error);
     res.status(500).json({ error: "No se pudo realizar la reserva", details: error.message });
   } finally {
     if (connection) connection.close();
@@ -344,12 +385,12 @@ app.post("/api/reservations", verifyToken, async (req, res) => {
 });
 
 // Ruta para cancelar una reserva (restringida a admin)
-app.delete("/api/reservations/:id", verifyToken, verifyAdmin, async (req, res) => {
+app.delete("/:building/api/reservations/:id", verifyToken, verifyAdmin, async (req, res) => {
   const reservationId = req.params.id;
 
   let connection;
   try {
-    connection = await getDBConnection();
+    connection = await getDBConnection(req);
 
     const result = await connection
       .request()
@@ -361,12 +402,14 @@ app.delete("/api/reservations/:id", verifyToken, verifyAdmin, async (req, res) =
     }
 
     // Invalidar el caché después de cancelar una reserva
-    cache.del("reservations");
-    console.log("✅ Caché de reservas invalidado después de cancelar una reserva");
+    cache.del(`reservations_${req.building}`);
+    console.log(
+      `✅ Caché de reservas invalidado después de cancelar una reserva en ${req.building}`
+    );
 
     res.json({ message: "Reserva cancelada con éxito" });
   } catch (err) {
-    console.error("❌ Error al cancelar la reserva:", err);
+    console.error(`❌ Error al cancelar la reserva en ${req.building}:`, err);
     res.status(500).json({ error: "Error al cancelar la reserva", details: err.message });
   } finally {
     if (connection) connection.close();
