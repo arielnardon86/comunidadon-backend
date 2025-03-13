@@ -429,6 +429,12 @@ app.delete("/:building/api/reservations/:id", verifyToken, verifyAdmin, async (r
   }
 });
 
+// Middleware para manejar rutas no encontradas
+app.use((req, res) => {
+  console.error(`❌ Ruta no encontrada: ${req.originalUrl}`);
+  res.status(404).json({ error: "Ruta no encontrada" });
+});
+
 // Middleware para manejar errores generales
 app.use((err, req, res, next) => {
   console.error("❌ Error en el servidor:", err);
