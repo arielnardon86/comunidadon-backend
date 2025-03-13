@@ -206,12 +206,14 @@ app.post("/:building/api/login", async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
+    console.log(`❌ Validación fallida: Username o password no proporcionados`);
     return res.status(400).json({ error: "Username y password son obligatorios" });
   }
 
   let connection;
   try {
     connection = await pools[req.building].connect();
+    console.log(`✅ Conexión a la base de datos establecida para ${req.building}`);
 
     const result = await connection
       .request()
@@ -219,25 +221,30 @@ app.post("/:building/api/login", async (req, res) => {
       .query("SELECT * FROM users WHERE username = @username");
 
     if (result.recordset.length === 0) {
+      console.log(`❌ Usuario no encontrado: ${username}`);
       return res.status(401).json({ error: "Usuario no encontrado" });
     }
 
     const user = result.recordset[0];
+    console.log(`✅ Usuario encontrado: ${username}`);
     const match = await bcrypt.compare(password, user.password);
 
     if (!match) {
+      console.log(`❌ Contraseña incorrecta para usuario: ${username}`);
       return res.status(401).json({ error: "Contraseña incorrecta" });
     }
 
     const token = jwt.sign({ username: user.username, building: req.building }, SECRET_KEY, {
       expiresIn: "1h",
     });
+    console.log(`✅ Login exitoso para ${username}, token generado`);
     res.status(200).json({ message: "Login exitoso", token });
   } catch (error) {
     console.error(`❌ Error al iniciar sesión en ${req.building}:`, error);
     res.status(500).json({ error: "Error al iniciar sesión", details: error.message });
   } finally {
     if (connection) connection.close();
+    console.log(`🔚 Conexión cerrada para ${req.building}`);
   }
 });
 
@@ -246,12 +253,14 @@ app.post("/:building/api/register", verifyToken, verifyAdmin, async (req, res) =
   const { username, password } = req.body;
 
   if (!username || !password) {
+    console.log(`❌ Validación fallida: Username o password no proporcionados`);
     return res.status(400).json({ error: "Username y password son obligatorios" });
   }
 
   let connection;
   try {
     connection = await pools[req.building].connect();
+    console.log(`✅ Conexión a la base de datos establecida para ${req.building}`);
 
     const existingUser = await connection
       .request()
@@ -259,6 +268,7 @@ app.post("/:building/api/register", verifyToken, verifyAdmin, async (req, res) =
       .query("SELECT * FROM users WHERE username = @username");
 
     if (existingUser.recordset.length > 0) {
+      console.log(`❌ Usuario ya existe: ${username}`);
       return res.status(400).json({ error: "El username ya está en uso" });
     }
 
@@ -271,12 +281,14 @@ app.post("/:building/api/register", verifyToken, verifyAdmin, async (req, res) =
       .input("password", sql.NVarChar, hashedPassword)
       .query("INSERT INTO users (username, password) VALUES (@username, @password)");
 
+    console.log(`✅ Usuario registrado: ${username}`);
     res.status(201).json({ message: "Usuario registrado con éxito" });
   } catch (error) {
     console.error(`❌ Error al registrar usuario en ${req.building}:`, error);
     res.status(500).json({ error: "No se pudo registrar el usuario", details: error.message });
   } finally {
     if (connection) connection.close();
+    console.log(`🔚 Conexión cerrada para ${req.building}`);
   }
 });
 
