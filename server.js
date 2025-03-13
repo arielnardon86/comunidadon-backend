@@ -145,10 +145,10 @@ const buildingMap = {
 
 // Middleware para determinar el edificio desde la URL
 app.use("/:building", (req, res, next) => {
-  const buildingFromUrl = req.params.building; // Usamos req.params.building en lugar de req.path
+  const buildingFromUrl = req.params.building;
   const building = buildingMap[buildingFromUrl];
 
-  console.log(`Ruta completa: ${req.originalUrl}`); // Depuración
+  console.log(`Ruta completa: ${req.originalUrl}`);
   console.log(`Building desde URL (req.params.building): ${buildingFromUrl}, mapeado a: ${building}`);
   console.log(`dbConfigs[${building}]:`, dbConfigs[building] ? "Definido" : "No definido");
 
@@ -163,6 +163,16 @@ app.use("/:building", (req, res, next) => {
 
   req.building = building;
   next();
+});
+
+// Ruta raíz para evitar el error "Cannot GET /"
+app.get("/", (req, res) => {
+  res.status(200).json({ message: "Bienvenido al backend de ComunidadOn" });
+});
+
+// Ruta para manejar solicitudes GET no deseadas a /torre-x/api/login
+app.get("/api/login", (req, res) => {
+  res.status(405).json({ error: "Método no permitido. Usa POST para iniciar sesión." });
 });
 
 // Función para obtener una conexión del pool según el edificio
