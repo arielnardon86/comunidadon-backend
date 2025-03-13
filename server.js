@@ -200,13 +200,9 @@ app.get("/", (req, res) => {
   res.status(200).json({ message: "Bienvenido al backend de ComunidadOn" });
 });
 
-// Rutas anidadas dentro del middleware
-app.use("/:building", (req, res, next) => {
-  // Middleware adicional para las rutas específicas
-  next();
-});
-
+// Definir las rutas específicas
 app.post("/:building/api/login", async (req, res) => {
+  console.log(`📥 Solicitud recibida en /${req.params.building}/api/login`);
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -246,6 +242,7 @@ app.post("/:building/api/login", async (req, res) => {
 });
 
 app.post("/:building/api/register", verifyToken, verifyAdmin, async (req, res) => {
+  console.log(`📥 Solicitud recibida en /${req.params.building}/api/register`);
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -284,6 +281,7 @@ app.post("/:building/api/register", verifyToken, verifyAdmin, async (req, res) =
 });
 
 app.get("/:building/api/test-db", async (req, res) => {
+  console.log(`📥 Solicitud recibida en /${req.params.building}/api/test-db`);
   let connection;
   try {
     connection = await pools[req.building].connect();
@@ -298,6 +296,7 @@ app.get("/:building/api/test-db", async (req, res) => {
 });
 
 app.get("/:building/api/tables", verifyToken, async (req, res) => {
+  console.log(`📥 Solicitud recibida en /${req.params.building}/api/tables`);
   let connection;
   try {
     connection = await pools[req.building].connect();
@@ -312,6 +311,7 @@ app.get("/:building/api/tables", verifyToken, async (req, res) => {
 });
 
 app.get("/:building/api/reservations", verifyToken, async (req, res) => {
+  console.log(`📥 Solicitud recibida en /${req.params.building}/api/reservations`);
   let connection;
   try {
     const cacheKey = `reservations_${req.building}`;
@@ -344,6 +344,7 @@ app.get("/:building/api/reservations", verifyToken, async (req, res) => {
 });
 
 app.post("/:building/api/reservations", verifyToken, async (req, res) => {
+  console.log(`📥 Solicitud recibida en /${req.params.building}/api/reservations`);
   const { tableId, turno, date } = req.body;
 
   if (!tableId || !turno || !date) {
@@ -400,6 +401,7 @@ app.post("/:building/api/reservations", verifyToken, async (req, res) => {
 });
 
 app.delete("/:building/api/reservations/:id", verifyToken, verifyAdmin, async (req, res) => {
+  console.log(`📥 Solicitud recibida en /${req.params.building}/api/reservations/${req.params.id}`);
   const reservationId = req.params.id;
 
   let connection;
