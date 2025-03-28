@@ -186,6 +186,33 @@ const clubInfoConfig = {
       { icon: "faHome", text: "Espacios familiares" },
     ],
   },
+  "miraflores-i": {
+    title: "Información del Club Miraflores I",
+    backgroundImage: null,
+    textColor: "#1a202c",
+    regulation: {
+      rules: [
+        "Prohibido el ingreso de alimentos externos",
+        "Respetar el horario de cierre",
+        "No se permiten eventos sin autorización previa",
+      ],
+    },
+    horarios: {
+      mediodia: "Todos los días: 11:30 a 15:30",
+      noche: [
+        "Domingo a Jueves: 18:30 a 22:30",
+        "Viernes y Sábados: 18:30 a 23:30",
+      ],
+    },
+    servicios: [
+      { icon: "faWifi", text: "Wifi" },
+      { icon: "faTv", text: "TV" },
+      { icon: "faToilet", text: "Baños" },
+      { icon: "faParking", text: "Estacionamiento" },
+      { icon: "faUtensils", text: "Cocina equipada" },
+      { icon: "faBirthdayCake", text: "Eventos y cumpleaños" },
+    ],
+  },
   default: {
     title: "Información del Club",
     backgroundImage: null,
