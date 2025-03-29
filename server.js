@@ -36,25 +36,22 @@ if (missingGlobalVars.length > 0) {
 // Función para obtener las configuraciones de todos los edificios dinámicamente
 const getBuildingConfigs = () => {
   const dbConfigs = {};
-  const buildingPrefixPattern = /^(.+)_DB_(USER|PASSWORD|HOST|NAME|PORT)$/i; // Insensible a mayúsculas
+  const buildingPrefixPattern = /^(.+)_DB_(USER|PASSWORD|HOST|NAME|PORT)$/i;
 
-  // Obtener todas las variables de entorno
   const envVars = process.env;
   const envKeys = Object.keys(envVars);
 
-  // Agrupar las variables por edificio
   const buildings = new Set();
   for (const key of envKeys) {
     const match = key.match(buildingPrefixPattern);
     if (match) {
-      const building = match[1]; // Mantener el prefijo original (VOW, Torre_x)
+      const building = match[1];
       buildings.add(building);
     }
   }
 
   console.log("Edificios detectados:", Array.from(buildings));
 
-  // Crear configuraciones para cada edificio
   for (const building of buildings) {
     const user = envVars[`${building}_DB_USER`];
     const password = envVars[`${building}_DB_PASSWORD`];
@@ -62,7 +59,6 @@ const getBuildingConfigs = () => {
     const database = envVars[`${building}_DB_NAME`];
     const port = Number(envVars[`${building}_DB_PORT`]) || 1433;
 
-    // Validar que todas las variables requeridas estén presentes
     const missingConfigVars = [];
     if (!user) missingConfigVars.push(`${building}_DB_USER`);
     if (!password) missingConfigVars.push(`${building}_DB_PASSWORD`);
@@ -76,8 +72,7 @@ const getBuildingConfigs = () => {
       process.exit(1);
     }
 
-    // Normalizar la clave del edificio a minúsculas para dbConfigs
-    const buildingKey = building.toLowerCase().replace(/_/g, "-"); // Convertir Torre_x a torre-x
+    const buildingKey = building.toLowerCase().replace(/_/g, "-");
     dbConfigs[buildingKey] = {
       user,
       password,
@@ -139,8 +134,6 @@ const cache = new NodeCache({ stdTTL: 600 });
 // Configuración de información de los edificios para /api/club-info
 const clubInfoConfig = {
   vow: {
-    title: "Información del Club Vow",
-    backgroundImage: null,
     textColor: "#2d3748",
     regulation: {
       rules: ["Respetar los horarios establecidos", "No hacer ruidos molestos", "Mantener el espacio limpio"],
@@ -164,8 +157,6 @@ const clubInfoConfig = {
     ],
   },
   "torre-x": {
-    title: "Información del Club Torre X",
-    backgroundImage: null,
     textColor: "#4a5568",
     regulation: {
       rules: ["Prohibido traer bebidas alcohólicas", "No se permiten mascotas", "Respetar el aforo máximo"],
@@ -187,8 +178,6 @@ const clubInfoConfig = {
     ],
   },
   "miraflores-i": {
-    title: "Información del Club Miraflores I",
-    backgroundImage: null,
     textColor: "#1a202c",
     regulation: {
       rules: [
@@ -214,8 +203,6 @@ const clubInfoConfig = {
     ],
   },
   default: {
-    title: "Información del Club",
-    backgroundImage: null,
     textColor: "#718096",
     regulation: {
       rules: ["Reglamento no disponible", "Contacta al administrador"],
@@ -226,6 +213,14 @@ const clubInfoConfig = {
     },
     servicios: [],
   },
+};
+
+// Configuración de imágenes de fondo para /api/background
+const backgroundImages = {
+  vow: "/images/vow-background.jpg",
+  "torre-x": "/images/torre-x-background.jpg",
+  "miraflores-i": "/images/default-portada.jpg",
+  default: "/images/default-portada.jpg",
 };
 
 const app = express();
@@ -251,6 +246,9 @@ app.use(
 );
 
 app.use(express.json());
+
+// Servir imágenes estáticas
+app.use("/images", express.static("public/images"));
 
 // Middleware para manejar errores de CORS
 app.use((err, req, res, next) => {
@@ -279,7 +277,7 @@ const buildingRouter = express.Router();
 
 // Middleware para determinar el edificio desde la URL
 app.use("/:building", (req, res, next) => {
-  const building = req.params.building.toLowerCase(); // Normalizar a minúsculas
+  const building = req.params.building.toLowerCase();
 
   console.log(`Ruta completa: ${req.originalUrl}`);
   console.log(`Building desde URL: ${building}`);
@@ -342,6 +340,13 @@ buildingRouter.get("/api/club-info", verifyToken, (req, res) => {
   res.status(200).json(clubInfo);
 });
 
+// Nueva ruta para obtener el fondo del edificio
+buildingRouter.get("/api/background", (req, res) => {
+  const building = req.building;
+  const backgroundImage = backgroundImages[building] || backgroundImages.default;
+  res.status(200).json({ backgroundImage });
+});
+
 buildingRouter.get("/api/login", (req, res) => {
   res.status(405).json({ error: "Método no permitido. Usa POST para iniciar sesión." });
 });
@@ -357,7 +362,6 @@ buildingRouter.post("/api/register", verifyToken, verifyAdmin, async (req, res) 
   try {
     connection = await getDBConnection(req);
 
-    // Verificar si el username ya existe
     const existingUser = await connection
       .request()
       .input("username", sql.NVarChar, username)
@@ -367,11 +371,9 @@ buildingRouter.post("/api/register", verifyToken, verifyAdmin, async (req, res) 
       return res.status(400).json({ error: "El username ya está en uso" });
     }
 
-    // Hashear la contraseña con bcrypt
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Insertar nuevo usuario
     await connection
       .request()
       .input("username", sql.NVarChar, username)
@@ -484,7 +486,6 @@ buildingRouter.post("/api/reservations", verifyToken, async (req, res) => {
       username: req.user.username,
     });
 
-    // Invalidar el caché después de crear una reserva
     cache.del(`reservations_${req.building}`);
     console.log(
       `✅ Caché de reservas invalidado después de crear una nueva reserva en ${req.building}`
@@ -503,7 +504,6 @@ buildingRouter.delete("/api/reservations/:id", verifyToken, verifyAdmin, async (
   try {
     const result = await models[req.building].Reservation.deleteReservation(reservationId);
 
-    // Invalidar el caché después de cancelar una reserva
     cache.del(`reservations_${req.building}`);
     console.log(
       `✅ Caché de reservas invalidado después de cancelar una reserva en ${req.building}`
