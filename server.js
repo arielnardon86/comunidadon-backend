@@ -300,27 +300,12 @@ app.use("/:building", (req, res, next) => {
   next();
 }, buildingRouter);
 
-// Función para obtener una conexión del pool según el edificio
+// Función para obtener un objeto request del pool según el edificio
 async function getDBConnection(req) {
   try {
     const pool = pools[req.building];
-    const connection = await pool.acquire(); // Usar acquire para obtener una conexión del pool
-
-    // Probar la conexión antes de usarla
-    await new Promise((resolve, reject) => {
-      connection.request().query("SELECT 1", (err) => {
-        if (err) {
-          console.error(`❌ Error al probar conexión para ${req.building}:`, err);
-          connection.release(); // Liberar la conexión si falla
-          reject(err);
-        } else {
-          console.log(`✅ Conexión probada para ${req.building}`);
-          resolve();
-        }
-      });
-    });
-
-    return connection;
+    const request = pool.request(); // Crear un objeto request directamente desde el pool
+    return request;
   } catch (err) {
     console.error(`❌ Error al obtener conexión a la BD para ${req.building}:`, err);
     throw err;
@@ -397,13 +382,12 @@ buildingRouter.post("/api/register", verifyToken, verifyAdmin, async (req, res) 
     return res.status(400).json({ error: "Username y password son obligatorios" });
   }
 
-  let connection;
+  let request;
   try {
-    connection = await getDBConnection(req);
+    request = await getDBConnection(req);
 
     const existingUser = await retry(() =>
-      connection
-        .request()
+      request
         .input("username", sql.NVarChar, username)
         .query("SELECT * FROM users WHERE username = @username")
     );
@@ -416,8 +400,7 @@ buildingRouter.post("/api/register", verifyToken, verifyAdmin, async (req, res) 
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     await retry(() =>
-      connection
-        .request()
+      request
         .input("username", sql.NVarChar, username)
         .input("password", sql.NVarChar, hashedPassword)
         .query("INSERT INTO users (username, password) VALUES (@username, @password)")
@@ -427,8 +410,6 @@ buildingRouter.post("/api/register", verifyToken, verifyAdmin, async (req, res) 
   } catch (error) {
     console.error(`❌ Error al registrar usuario en ${req.building}:`, error);
     res.status(500).json({ error: "No se pudo registrar el usuario", details: error.message });
-  } finally {
-    if (connection) connection.release(); // Liberar la conexión al pool
   }
 });
 
@@ -439,13 +420,12 @@ buildingRouter.post("/api/login", async (req, res) => {
     return res.status(400).json({ error: "Username y password son obligatorios" });
   }
 
-  let connection;
+  let request;
   try {
-    connection = await getDBConnection(req);
+    request = await getDBConnection(req);
 
     const result = await retry(() =>
-      connection
-        .request()
+      request
         .input("username", sql.NVarChar, username)
         .query("SELECT * FROM users WHERE username = @username")
     );
@@ -468,24 +448,20 @@ buildingRouter.post("/api/login", async (req, res) => {
   } catch (error) {
     console.error(`❌ Error al iniciar sesión en ${req.building}:`, error);
     res.status(500).json({ error: "Error al iniciar sesión", details: error.message });
-  } finally {
-    if (connection) connection.release(); // Liberar la conexión al pool
   }
 });
 
 buildingRouter.get("/api/test-db", async (req, res) => {
-  let connection;
+  let request;
   try {
-    connection = await getDBConnection(req);
+    request = await getDBConnection(req);
     const result = await retry(() =>
-      connection.request().query("SELECT 1 + 1 AS result")
+      request.query("SELECT 1 + 1 AS result")
     );
     res.json({ success: true, result: result.recordset[0].result });
   } catch (error) {
     console.error(`❌ Error al conectar con la BD de ${req.building}:`, error);
     res.status(500).json({ error: "Error al conectar con la base de datos", details: error.message });
-  } finally {
-    if (connection) connection.release();
   }
 });
 
