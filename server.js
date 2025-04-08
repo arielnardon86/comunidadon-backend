@@ -505,7 +505,35 @@ buildingRouter.post("/api/reservations", verifyToken, async (req, res) => {
     return res.status(400).json({ error: "Todos los campos son obligatorios" });
   }
 
+  let request;
   try {
+    // Obtener una conexión para realizar la consulta
+    request = await getDBConnection(req);
+
+    // Verificar si el usuario ya tiene una reserva para el mismo día (excepto si es admin)
+    if (req.user.username !== "admin") {
+      const reservationDate = new Date(date);
+      const formattedDate = reservationDate.toISOString().split("T")[0]; // Formato YYYY-MM-DD
+
+      const existingReservation = await retry(() =>
+        request
+          .input("username", sql.NVarChar, req.user.username)
+          .input("reservationDate", sql.Date, formattedDate)
+          .query(`
+            SELECT * FROM reservations 
+            WHERE username = @username 
+            AND CAST(date AS DATE) = @reservationDate
+          `)
+      );
+
+      if (existingReservation.recordset.length > 0) {
+        return res.status(400).json({
+          error: "Ya tienes una reserva para este día. Solo se permite una reserva por día.",
+        });
+      }
+    }
+
+    // Si el usuario es admin o no hay reservas existentes para el día, proceder a crear la nueva reserva
     const newReservation = await retry(() =>
       models[req.building].Reservation.createReservation({
         tableId,
