@@ -82,14 +82,18 @@ const getBuildingConfigs = () => {
       options: {
         encrypt: true,
         trustServerCertificate: false,
+        enableArithAbort: true, // Recomendado para Azure SQL
       },
       pool: {
         max: 10,
-        min: 0,
-        idleTimeoutMillis: 30000,
+        min: 2, // Mantener al menos 2 conexiones abiertas
+        idleTimeoutMillis: 60000, // 60 segundos
+        acquireTimeoutMillis: 60000, // 60 segundos
+        createTimeoutMillis: 60000, // 60 segundos
+        destroyTimeoutMillis: 60000, // 60 segundos
       },
-      requestTimeout: 30000,
-      connectionTimeout: 30000,
+      requestTimeout: 60000, // 60 segundos
+      connectionTimeout: 60000, // 60 segundos
     };
 
     console.log(`✅ Configuración válida para ${buildingKey}:`, {
@@ -123,6 +127,17 @@ for (const [building, config] of Object.entries(dbConfigs)) {
       console.error(`❌ Error al conectar al pool de ${building}:`, err);
       process.exit(1);
     });
+
+  // Configurar keep-alive periódico
+  setInterval(() => {
+    pools[building].request().query("SELECT 1", (err) => {
+      if (err) {
+        console.error(`❌ Error al mantener conexión viva para ${building}:`, err);
+      } else {
+        console.log(`✅ Conexión mantenida viva para ${building}`);
+      }
+    });
+  }, 30000); // Enviar un ping cada 30 segundos
 }
 
 // Inicializar los modelos con los pools de conexión
@@ -291,10 +306,17 @@ app.use("/:building", (req, res, next) => {
   next();
 }, buildingRouter);
 
-// Función para obtener una conexión del pool según el edificio
+// Función para obtener un objeto request del pool según el edificio
 async function getDBConnection(req) {
   try {
-    return await pools[req.building].connect();
+    const pool = pools[req.building];
+    const request = pool.request(); // Crear un objeto request directamente desde el pool
+
+    // Probar la conexión antes de usarla
+    await request.query("SELECT 1");
+    console.log(`✅ Conexión probada para ${req.building}`);
+
+    return request;
   } catch (err) {
     console.error(`❌ Error al obtener conexión a la BD para ${req.building}:`, err);
     throw err;
@@ -331,6 +353,19 @@ const verifyAdmin = (req, res, next) => {
   next();
 };
 
+// Función de reintento para operaciones de base de datos
+const retry = async (fn, retries = 3, delay = 1000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === retries - 1) throw err; // Último intento, lanza el error
+      console.log(`Intento ${i + 1} falló, reintentando en ${delay}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+};
+
 // Rutas dentro del router (se aplican después de /:building)
 
 // Nueva ruta para obtener la información del club
@@ -352,20 +387,21 @@ buildingRouter.get("/api/login", (req, res) => {
 });
 
 buildingRouter.post("/api/register", verifyToken, verifyAdmin, async (req, res) => {
-  const { username, password, phone_number } = req.body;
+  const { username, password, phone_number, email } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: "Username y password son obligatorios" });
   }
 
-  let connection;
+  let request;
   try {
-    connection = await getDBConnection(req);
+    request = await getDBConnection(req);
 
-    const existingUser = await connection
-      .request()
-      .input("username", sql.NVarChar, username)
-      .query("SELECT * FROM users WHERE username = @username");
+    const existingUser = await retry(() =>
+      request
+        .input("username", sql.NVarChar, username)
+        .query("SELECT * FROM users WHERE username = @username")
+    );
 
     if (existingUser.recordset.length > 0) {
       return res.status(400).json({ error: "El username ya está en uso" });
@@ -374,19 +410,19 @@ buildingRouter.post("/api/register", verifyToken, verifyAdmin, async (req, res) 
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    await connection
-      .request()
-      .input("username", sql.NVarChar, username)
-      .input("password", sql.NVarChar, hashedPassword)
-      .input("phone_number", sql.NVarChar, phone_number || null) // Guardamos el número de teléfono (puede ser null)
-      .query("INSERT INTO users (username, password, phone_number) VALUES (@username, @password, @phone_number)");
+    await retry(() =>
+      request
+        .input("username", sql.NVarChar, username)
+        .input("password", sql.NVarChar, hashedPassword)
+        .input("phone_number", sql.NVarChar, phone_number || null)
+        .input("email", sql.NVarChar, email || null)
+        .query("INSERT INTO users (username, password, phone_number, email) VALUES (@username, @password, @phone_number, @email)")
+    );
 
     res.status(201).json({ message: "Usuario registrado con éxito" });
   } catch (error) {
     console.error(`❌ Error al registrar usuario en ${req.building}:`, error);
     res.status(500).json({ error: "No se pudo registrar el usuario", details: error.message });
-  } finally {
-    if (connection) connection.close();
   }
 });
 
@@ -397,14 +433,15 @@ buildingRouter.post("/api/login", async (req, res) => {
     return res.status(400).json({ error: "Username y password son obligatorios" });
   }
 
-  let connection;
+  let request;
   try {
-    connection = await getDBConnection(req);
+    request = await getDBConnection(req);
 
-    const result = await connection
-      .request()
-      .input("username", sql.NVarChar, username)
-      .query("SELECT * FROM users WHERE username = @username");
+    const result = await retry(() =>
+      request
+        .input("username", sql.NVarChar, username)
+        .query("SELECT * FROM users WHERE username = @username")
+    );
 
     if (result.recordset.length === 0) {
       return res.status(401).json({ error: "Usuario no encontrado" });
@@ -424,28 +461,28 @@ buildingRouter.post("/api/login", async (req, res) => {
   } catch (error) {
     console.error(`❌ Error al iniciar sesión en ${req.building}:`, error);
     res.status(500).json({ error: "Error al iniciar sesión", details: error.message });
-  } finally {
-    if (connection) connection.close();
   }
 });
 
 buildingRouter.get("/api/test-db", async (req, res) => {
-  let connection;
+  let request;
   try {
-    connection = await getDBConnection(req);
-    const result = await connection.request().query("SELECT 1 + 1 AS result");
+    request = await getDBConnection(req);
+    const result = await retry(() =>
+      request.query("SELECT 1 + 1 AS result")
+    );
     res.json({ success: true, result: result.recordset[0].result });
   } catch (error) {
     console.error(`❌ Error al conectar con la BD de ${req.building}:`, error);
     res.status(500).json({ error: "Error al conectar con la base de datos", details: error.message });
-  } finally {
-    if (connection) connection.close();
   }
 });
 
 buildingRouter.get("/api/tables", verifyToken, async (req, res) => {
   try {
-    const tables = await models[req.building].Table.getAllTables();
+    const tables = await retry(() =>
+      models[req.building].Table.getAllTables()
+    );
     res.status(200).json(tables);
   } catch (error) {
     console.error(`❌ Error al obtener mesas de ${req.building}:`, error);
@@ -462,7 +499,9 @@ buildingRouter.get("/api/reservations", verifyToken, async (req, res) => {
       return res.status(200).json(cachedReservations);
     }
 
-    const reservations = await models[req.building].Reservation.getAllReservations();
+    const reservations = await retry(() =>
+      models[req.building].Reservation.getAllReservations()
+    );
     cache.set(cacheKey, reservations);
     console.log(`✅ Reservas obtenidas de la BD y guardadas en caché para ${req.building}`);
     res.status(200).json(reservations);
@@ -480,13 +519,17 @@ buildingRouter.post("/api/reservations", verifyToken, async (req, res) => {
   }
 
   try {
-    const newReservation = await models[req.building].Reservation.createReservation({
-      tableId,
-      turno,
-      date,
-      username: req.user.username,
-    });
+    // Crear la reserva
+    const newReservation = await retry(() =>
+      models[req.building].Reservation.createReservation({
+        tableId,
+        turno,
+        date,
+        username: req.user.username,
+      })
+    );
 
+    // Invalidar el caché de reservas
     cache.del(`reservations_${req.building}`);
     console.log(
       `✅ Caché de reservas invalidado después de crear una nueva reserva en ${req.building}`
@@ -503,7 +546,9 @@ buildingRouter.delete("/api/reservations/:id", verifyToken, verifyAdmin, async (
   const reservationId = req.params.id;
 
   try {
-    const result = await models[req.building].Reservation.deleteReservation(reservationId);
+    const result = await retry(() =>
+      models[req.building].Reservation.deleteReservation(reservationId)
+    );
 
     cache.del(`reservations_${req.building}`);
     console.log(
@@ -525,6 +570,9 @@ app.use((err, req, res, next) => {
 
 // Iniciar el servidor con puerto dinámico para Render
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
 });
+
+// Habilitar keepAlive en el servidor
+server.keepAliveTimeout = 120000; // 120 segundos
