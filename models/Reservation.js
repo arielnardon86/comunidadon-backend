@@ -12,10 +12,10 @@ class Reservation {
       const connection = await this.pool.connect();
       const result = await connection
         .request()
-        .query("SELECT id, table_id, turno, date, username FROM reservations");
+        .query("SELECT id, tableId, turno, date, username FROM reservations");
       return result.recordset.map((res) => ({
         id: res.id,
-        tableId: res.table_id,
+        tableId: res.tableId,
         turno: res.turno,
         date: res.date.toISOString().split("T")[0],
         username: res.username,
@@ -49,7 +49,7 @@ class Reservation {
         .input("date", sql.Date, date)
         .input("username", sql.NVarChar, username)
         .query(
-          "INSERT INTO reservations (table_id, turno, date, username) VALUES (@tableId, @turno, @date, @username); SELECT SCOPE_IDENTITY() as id"
+          "INSERT INTO reservations (tableId, turno, date, username) VALUES (@tableId, @turno, @date, @username); SELECT SCOPE_IDENTITY() as id"
         );
 
       return {
