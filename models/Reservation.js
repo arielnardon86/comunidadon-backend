@@ -35,7 +35,7 @@ class Reservation {
         .input("turno", sql.NVarChar, turno)
         .input("date", sql.Date, date)
         .query(
-          "SELECT * FROM reservations WHERE table_id = @tableId AND turno = @turno AND date = @date"
+          "SELECT * FROM reservations WHERE tableId = @tableId AND turno = @turno AND date = @date"
         );
 
       if (existing.recordset.length > 0) {
