@@ -92,6 +92,28 @@ app.use("/:building", (req, res, next) => {
 // Rutas
 const buildingRouter = express.Router();
 
+// Nueva ruta para obtener la lista de edificios
+buildingRouter.get("/api/buildings", verifyToken, async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const request = pool.request();
+    // Consulta para obtener edificios únicos desde la tabla users
+    const result = await request.query(
+      "SELECT DISTINCT building FROM users"
+    );
+    const buildings = result.recordset.map(row => row.building);
+    res.json(buildings);
+  } catch (error) {
+    console.error("Error al obtener los edificios:", error);
+    res.status(500).json({ error: "Error al obtener los edificios" });
+  }
+});
+
+// Nueva ruta temporal para background
+buildingRouter.get("/api/background", (req, res) => { // Sin autenticación por ahora
+  res.json({ backgroundImage: "/images/default-portada.jpg" });
+});
+
 // Login
 buildingRouter.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
@@ -134,7 +156,8 @@ buildingRouter.post("/api/register", verifyToken, verifyAdminForBuilding, async 
   const building = req.building;
 
   try {
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
     const pool = await poolPromise;
     const request = pool.request();
     request.input("username", sql.NVarChar, username);
