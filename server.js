@@ -153,8 +153,8 @@ buildingRouter.post("/api/register", verifyToken, verifyAdminForBuilding, async 
     res.status(201).json({ message: "Usuario registrado correctamente" });
   } catch (error) {
     console.error(`Error al registrar usuario en ${building}:`, error);
-    if (error.number === 2627) { // Violación de clave única (username)
-      res.status(400).json({ error: "El username ya está en uso" });
+    if (error.number === 2627) { // Violación de clave única (username, building)
+      res.status(400).json({ error: `El username '${username}' ya está en uso para el edificio '${building}'` });
     } else {
       res.status(500).json({ error: "Error al registrar usuario" });
     }
@@ -305,9 +305,33 @@ app.get("/api/buildings", async (req, res) => {
   }
 });
 
-// Ruta temporal para background (mover fuera de /:building)
-app.get("/api/background", (req, res) => {
-  res.json({ backgroundImage: "/images/default-portada.jpg" });
+// Obtener imagenes de fondo de la pantalla login
+app.get("/api/background/:building", async (req, res) => {
+  const building = req.params.building.toLowerCase();
+  try {
+    const pool = await poolPromise;
+    const request = pool.request();
+    // Verificar que el building exista en users
+    const userCheck = await request.query(
+      "SELECT 1 FROM users WHERE building = @building",
+      { building: sql.NVarChar(building) }
+    );
+    if (userCheck.recordset.length === 0) {
+      return res.status(404).json({ error: "Edificio no encontrado" });
+    }
+    // Obtener la imagen de fondo
+    const result = await request.query(
+      "SELECT image_path FROM building_images WHERE building = @building"
+    );
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ error: "Imagen de fondo no encontrada" });
+    }
+    const imagePath = result.recordset[0].image_path;
+    res.json({ backgroundImage: imagePath });
+  } catch (error) {
+    console.error("Error al obtener la imagen de fondo:", error);
+    res.status(500).json({ error: "Error al obtener la imagen de fondo" });
+  }
 });
 
 // Aplicar las rutas que dependen de /:building
