@@ -312,14 +312,15 @@ app.get("/api/background/:building", async (req, res) => {
     const pool = await poolPromise;
     const request = pool.request();
     // Verificar que el building exista en users
+    request.input("building", sql.NVarChar, building);
     const userCheck = await request.query(
-      "SELECT 1 FROM users WHERE building = @building",
-      { building: sql.NVarChar(building) }
+      "SELECT 1 FROM users WHERE building = @building"
     );
     if (userCheck.recordset.length === 0) {
       return res.status(404).json({ error: "Edificio no encontrado" });
     }
     // Obtener la imagen de fondo
+    request.input("building", sql.NVarChar, building); // Declarar el parámetro nuevamente para la segunda consulta
     const result = await request.query(
       "SELECT image_path FROM building_images WHERE building = @building"
     );
