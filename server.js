@@ -92,28 +92,7 @@ app.use("/:building", (req, res, next) => {
 // Rutas
 const buildingRouter = express.Router();
 
-// Nueva ruta para obtener la lista de edificios
-buildingRouter.get("/api/buildings", verifyToken, async (req, res) => {
-  try {
-    const pool = await poolPromise;
-    const request = pool.request();
-    // Consulta para obtener edificios únicos desde la tabla users
-    const result = await request.query(
-      "SELECT DISTINCT building FROM users"
-    );
-    const buildings = result.recordset.map(row => row.building);
-    res.json(buildings);
-  } catch (error) {
-    console.error("Error al obtener los edificios:", error);
-    res.status(500).json({ error: "Error al obtener los edificios" });
-  }
-});
-
-// Nueva ruta temporal para background
-buildingRouter.get("/api/background", (req, res) => { // Sin autenticación por ahora
-  res.json({ backgroundImage: "/images/default-portada.jpg" });
-});
-
+// Rutas que dependen del prefijo /:building
 // Login
 buildingRouter.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
@@ -252,7 +231,6 @@ buildingRouter.post("/api/reservations", verifyToken, async (req, res) => {
     request.input("username", sql.NVarChar, username);
     request.input("building", sql.NVarChar, building);
 
-    // Verificar que la mesa y el turno pertenezcan al edificio
     const tableCheck = await pool.request()
       .input("tableId", sql.Int, tableId)
       .input("building", sql.NVarChar, building)
@@ -277,7 +255,7 @@ buildingRouter.post("/api/reservations", verifyToken, async (req, res) => {
     res.status(201).json({ message: "Reserva creada correctamente" });
   } catch (error) {
     console.error(`Error al crear reserva en ${building}:`, error);
-    if (error.number === 2627) { // Violación de clave única (reserva duplicada)
+    if (error.number === 2627) {
       res.status(400).json({ error: "Ya existe una reserva para esta mesa, turno y fecha" });
     } else {
       res.status(500).json({ error: "Error al crear la reserva" });
@@ -311,7 +289,28 @@ buildingRouter.delete("/api/reservations/:id", verifyToken, verifyAdminForBuildi
   }
 });
 
-// Aplicar las rutas al app
+// Ruta pública para obtener la lista de edificios (mover fuera de /:building)
+app.get("/api/buildings", async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const request = pool.request();
+    const result = await request.query(
+      "SELECT DISTINCT building FROM users"
+    );
+    const buildings = result.recordset.map(row => row.building);
+    res.json(buildings);
+  } catch (error) {
+    console.error("Error al obtener los edificios:", error);
+    res.status(500).json({ error: "Error al obtener los edificios" });
+  }
+});
+
+// Ruta temporal para background (mover fuera de /:building)
+app.get("/api/background", (req, res) => {
+  res.json({ backgroundImage: "/images/default-portada.jpg" });
+});
+
+// Aplicar las rutas que dependen de /:building
 app.use("/:building", buildingRouter);
 
 // Ruta raíz
