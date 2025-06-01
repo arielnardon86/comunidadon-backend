@@ -8,7 +8,7 @@ import 'dotenv/config';
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use('/images', express.static('public/images'));
+app.use('/images', express.static('public/images')); // Sirve archivos desde backend/public/images
 
 const dbConfig = {
   user: process.env.DB_USER,
@@ -48,7 +48,6 @@ const initializePool = async () => {
   }
 };
 
-// Definir rutas después de inicializar el pool
 const startServer = async () => {
   try {
     await initializePool();
@@ -78,7 +77,7 @@ const startServer = async () => {
     };
 
     app.use("/:building", (req, res, next) => {
-      const building = req.params.building.toLowerCase();
+      const building = req.params.building.toLowerCase().replace(/\s+/g, "-");
       req.building = building;
       next();
     });
@@ -289,31 +288,16 @@ const startServer = async () => {
       }
     });
 
-    app.get("/api/background/:building", async (req, res) => {
-      const building = req.params.building.toLowerCase();
-      try {
-        const pool = await poolPromise;
-        const request = pool.request();
-        request.input("building", sql.NVarChar, building);
-        const userCheck = await request.query(
-          "SELECT 1 FROM users WHERE building = @building"
-        );
-        if (userCheck.recordset.length === 0) {
-          return res.status(404).json({ error: "Edificio no encontrado" });
-        }
-        request.input("building", sql.NVarChar, building);
-        const result = await request.query(
-          "SELECT image_path FROM building_images WHERE building = @building"
-        );
-        if (result.recordset.length === 0) {
-          return res.status(404).json({ error: "Imagen de fondo no encontrada" });
-        }
-        const imagePath = result.recordset[0].image_path;
-        res.json({ backgroundImage: imagePath });
-      } catch (error) {
-        console.error("Error al obtener la imagen de fondo:", error);
-        res.status(500).json({ error: "Error al obtener la imagen de fondo" });
-      }
+    // Nueva ruta para obtener la imagen de fondo sin base de datos
+    app.get("/api/background/:building", (req, res) => {
+      const building = req.params.building.toLowerCase().replace(/\s+/g, "-");
+      const backgroundImages = {
+        'vow': '/images/vow-background.jpg',
+        'torre-del-lago': '/images/torre-del-lago-background.jpg',
+        // Agrega más edificios aquí si es necesario
+      };
+      const imagePath = backgroundImages[building] || '/images/default-portada.jpg';
+      res.json({ backgroundImage: imagePath });
     });
 
     app.use("/:building", buildingRouter);
