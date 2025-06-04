@@ -95,7 +95,6 @@ const startServer = async () => {
         const request = pool.request();
         request.input("username", sql.NVarChar, username);
         request.input("building", sql.NVarChar, building);
-        // Normalizar mayúsculas/minúsculas y espacios/guiones en la comparación
         const result = await request.query(
           `SELECT * FROM users 
            WHERE username = @username 
@@ -152,6 +151,98 @@ const startServer = async () => {
         } else {
           res.status(500).json({ error: "Error al registrar usuario" });
         }
+      }
+    });
+
+    buildingRouter.get("/api/users", verifyToken, verifyAdminForBuilding, async (req, res) => {
+      const building = req.building;
+      try {
+        const pool = await poolPromise;
+        const request = pool.request();
+        request.input("building", sql.NVarChar, building);
+        const result = await request.query(
+          `SELECT username, phone_number, email, building 
+           FROM users 
+           WHERE LOWER(REPLACE(building, ' ', '-')) = LOWER(REPLACE(@building, ' ', '-'))`
+        );
+        res.json(result.recordset);
+      } catch (error) {
+        console.error(`Error al obtener usuarios para ${building}:`, error);
+        res.status(500).json({ error: "Error al obtener los usuarios" });
+      }
+    });
+
+    buildingRouter.put("/api/users/:username", verifyToken, verifyAdminForBuilding, async (req, res) => {
+      const { username } = req.params;
+      const { password, phone_number, email } = req.body;
+      const building = req.building;
+
+      try {
+        const pool = await poolPromise;
+        const request = pool.request();
+        request.input("username", sql.NVarChar, username);
+        request.input("building", sql.NVarChar, building);
+
+        let query = `UPDATE users SET `;
+        const updates = [];
+        if (password) {
+          const saltRounds = 10;
+          const hashedPassword = await bcrypt.hash(password, saltRounds);
+          updates.push(`password = @password`);
+          request.input("password", sql.NVarChar, hashedPassword);
+        }
+        if (phone_number !== undefined) {
+          updates.push(`phone_number = @phone_number`);
+          request.input("phone_number", sql.NVarChar, phone_number);
+        }
+        if (email !== undefined) {
+          updates.push(`email = @email`);
+          request.input("email", sql.NVarChar, email);
+        }
+
+        if (updates.length === 0) {
+          return res.status(400).json({ error: "No se proporcionaron datos para actualizar" });
+        }
+
+        query += updates.join(", ") + ` WHERE username = @username AND LOWER(REPLACE(building, ' ', '-')) = LOWER(REPLACE(@building, ' ', '-'))`;
+
+        const result = await request.query(query);
+
+        if (result.rowsAffected[0] === 0) {
+          return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        res.json({ message: "Usuario actualizado correctamente" });
+      } catch (error) {
+        console.error(`Error al actualizar usuario en ${building}:`, error);
+        res.status(500).json({ error: "Error al actualizar el usuario" });
+      }
+    });
+
+    buildingRouter.delete("/api/users/:username", verifyToken, verifyAdminForBuilding, async (req, res) => {
+      const { username } = req.params;
+      const building = req.building;
+
+      try {
+        const pool = await poolPromise;
+        const request = pool.request();
+        request.input("username", sql.NVarChar, username);
+        request.input("building", sql.NVarChar, building);
+
+        const result = await request.query(
+          `DELETE FROM users 
+           WHERE username = @username 
+           AND LOWER(REPLACE(building, ' ', '-')) = LOWER(REPLACE(@building, ' ', '-'))`
+        );
+
+        if (result.rowsAffected[0] === 0) {
+          return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        res.json({ message: "Usuario eliminado correctamente" });
+      } catch (error) {
+        console.error(`Error al eliminar usuario en ${building}:`, error);
+        res.status(500).json({ error: "Error al eliminar el usuario" });
       }
     });
 
