@@ -59,6 +59,7 @@ const startServer = async () => {
       try {
         const decoded = jwt.verify(token, process.env.SECRET_KEY || "secret");
         req.user = decoded;
+        console.log("Token decodificado:", decoded);
         next();
       } catch (error) {
         console.error("Error al verificar el token:", error);
@@ -70,7 +71,7 @@ const startServer = async () => {
       if (req.user.username !== "admin") {
         return res.status(403).json({ error: "Acceso denegado: No eres administrador" });
       }
-      // Comparar sin distinción de mayúsculas/minúsculas
+      console.log("Comparando building:", req.user.building, "con", req.building);
       if (req.user.building.toLowerCase() !== req.building.toLowerCase()) {
         return res.status(403).json({ error: "Acceso denegado: No perteneces a este edificio" });
       }
@@ -94,8 +95,11 @@ const startServer = async () => {
         const request = pool.request();
         request.input("username", sql.NVarChar, username);
         request.input("building", sql.NVarChar, building);
+        // Normalizar mayúsculas/minúsculas y espacios/guiones en la comparación
         const result = await request.query(
-          "SELECT * FROM users WHERE username = @username AND building = @building"
+          `SELECT * FROM users 
+           WHERE username = @username 
+           AND LOWER(REPLACE(building, ' ', '-')) = LOWER(REPLACE(@building, ' ', '-'))`
         );
 
         const user = result.recordset[0];
@@ -109,7 +113,7 @@ const startServer = async () => {
         }
 
         const token = jwt.sign(
-          { username: user.username, building: user.building },
+          { username: user.username, building: user.building.toLowerCase().replace(/\s+/g, "-") },
           process.env.SECRET_KEY || "secret",
           { expiresIn: "1h" }
         );
@@ -281,7 +285,7 @@ const startServer = async () => {
         const result = await request.query(
           "SELECT DISTINCT building FROM users"
         );
-        const buildings = result.recordset.map(row => row.building);
+        const buildings = result.recordset.map(row => row.building.toLowerCase().replace(/\s+/g, "-"));
         res.json(buildings);
       } catch (error) {
         console.error("Error al obtener los edificios:", error);
@@ -294,7 +298,6 @@ const startServer = async () => {
       const backgroundImages = {
         'vow': '/images/vow-background.jpg',
         'torre-del-lago': '/images/torre-del-lago-background.jpg',
-        // Agrega más edificios aquí si es necesario
       };
       const imagePath = backgroundImages[building] || '/images/default-portada.jpg';
       res.json({ backgroundImage: imagePath });
