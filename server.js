@@ -70,7 +70,8 @@ const startServer = async () => {
       if (req.user.username !== "admin") {
         return res.status(403).json({ error: "Acceso denegado: No eres administrador" });
       }
-      if (req.user.building !== req.building) {
+      // Comparar sin distinción de mayúsculas/minúsculas
+      if (req.user.building.toLowerCase() !== req.building.toLowerCase()) {
         return res.status(403).json({ error: "Acceso denegado: No perteneces a este edificio" });
       }
       next();
@@ -288,7 +289,6 @@ const startServer = async () => {
       }
     });
 
-    // Nueva ruta para obtener la imagen de fondo sin base de datos
     app.get("/api/background/:building", (req, res) => {
       const building = req.params.building.toLowerCase().replace(/\s+/g, "-");
       const backgroundImages = {
