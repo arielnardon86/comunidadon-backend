@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import cors from 'cors';
 import 'dotenv/config';
+import NodeCache from 'node-cache'; // Añadimos node-cache para el caché
 
 const app = express();
 app.use(cors());
@@ -22,10 +23,10 @@ const dbConfig = {
     enableArithAbort: true,
   },
   pool: {
-    max: 10,
-    min: 2,
-    idleTimeoutMillis: 60000,
-    acquireTimeoutMillis: 60000,
+    max: 20, // Aumentamos el número máximo de conexiones
+    min: 5,  // Aumentamos el número mínimo de conexiones
+    idleTimeoutMillis: 300000, // 5 minutos antes de cerrar conexiones inactivas
+    acquireTimeoutMillis: 30000, // Reducimos a 30 segundos para adquisición más rápida
     createTimeoutMillis: 60000,
     destroyTimeoutMillis: 60000,
   },
@@ -34,6 +35,7 @@ const dbConfig = {
 };
 
 let poolPromise;
+const buildingCache = new NodeCache({ stdTTL: 600 }); // Caché de edificios con TTL de 10 minutos
 
 const initializePool = async () => {
   try {
@@ -41,6 +43,18 @@ const initializePool = async () => {
     poolPromise = new sql.ConnectionPool(dbConfig).connect();
     const pool = await poolPromise;
     console.log("✅ Pool de conexión inicializado correctamente");
+
+    // Mantenimiento del pool con ping periódico
+    setInterval(async () => {
+      try {
+        const request = await pool.request();
+        await request.query("SELECT 1");
+        console.log("Ping exitoso para mantener el pool activo");
+      } catch (error) {
+        console.error("Error en ping del pool:", error);
+      }
+    }, 120000); // Ping cada 2 minutos
+
     return pool;
   } catch (error) {
     console.error("❌ Error al inicializar el pool de conexión:", error);
@@ -114,7 +128,7 @@ const startServer = async () => {
         const token = jwt.sign(
           { username: user.username, building: user.building.toLowerCase().replace(/\s+/g, "-") },
           process.env.SECRET_KEY || "secret",
-          { expiresIn: "1h" }
+          { expiresIn: "24h" } // Aumentamos a 24 horas para evitar re-logueo frecuente
         );
         res.json({ token });
       } catch (error) {
@@ -370,6 +384,14 @@ const startServer = async () => {
     });
 
     app.get("/api/buildings", async (req, res) => {
+      const cacheKey = "buildings";
+      const cachedBuildings = buildingCache.get(cacheKey);
+
+      if (cachedBuildings) {
+        console.log("Sirviendo edificios desde caché");
+        return res.json(cachedBuildings);
+      }
+
       try {
         const pool = await poolPromise;
         const request = pool.request();
@@ -377,6 +399,7 @@ const startServer = async () => {
           "SELECT DISTINCT building FROM users"
         );
         const buildings = result.recordset.map(row => row.building.toLowerCase().replace(/\s+/g, "-"));
+        buildingCache.set(cacheKey, buildings); // Guardar en caché
         res.json(buildings);
       } catch (error) {
         console.error("Error al obtener los edificios:", error);
